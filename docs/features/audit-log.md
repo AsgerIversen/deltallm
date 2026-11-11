@@ -188,6 +188,28 @@ Audit payloads are handled differently depending on the event type:
 - Redis invalidation removes stale policy-cache entries across replicas, but privacy correctness does not depend on Pub/Sub availability
 - when content storage is disabled, the event is still recorded but request and response bodies are omitted or marked redacted
 
+### Streamed responses
+
+For a streamed text request (`stream: true`), DeltaLLM builds the response payload from the stream
+that it sends to the client. The payload is one `chat.completion` object with these fields:
+
+- `choices[0].message`: the assistant text (`content`), reasoning (`reasoning_content` and
+  `reasoning_details`), refusal (`refusal`) and tool calls (`tool_calls`)
+- `choices[0].finish_reason`
+- `usage`: the token counts of the stream
+- `stream: true`: this field shows that DeltaLLM built the payload from a stream
+- `truncated: true`: this field is present only when DeltaLLM dropped a part of the reply. This
+  occurs when the retained reply data is longer than `general_settings.audit_payload_max_bytes`
+  characters, or when the reply has more than 128 tool calls. DeltaLLM keeps the start of the reply.
+
+The payload has the same shape for `/v1/chat/completions`, `/v1/completions`, `/v1/responses` and
+`/v1/messages`. It does not have the provider's own response format.
+
+The event also records `input_tokens` and `output_tokens` for streamed requests.
+
+Streams that run gateway MCP tools still store the `{"object": ...}` placeholder as the response
+payload.
+
 ### Inline files and large payloads
 
 Before an audit event is accepted, DeltaLLM shrinks its request and response payloads. This keeps the

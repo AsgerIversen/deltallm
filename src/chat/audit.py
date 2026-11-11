@@ -9,12 +9,38 @@ from src.audit.delivery import AuditDeliveryClass
 from src.audit.errors import derive_audit_error_code
 from src.client_address import request_client_ip
 from src.billing.accounting.accounting_protocol import AccountingOperationHandle
+from src.chat.stream_reply import StreamReplyAccumulator
 from src.services.audit.audit_service import (
     AuditEventInput,
     AuditPayloadInput,
     AuditService,
     enqueue_audit_event,
 )
+from src.services.audit.payload_compaction import DEFAULT_AUDIT_PAYLOAD_MAX_BYTES
+
+
+def stream_reply_accumulator(request: Request) -> StreamReplyAccumulator | None:
+    """Return a bounded reply accumulator when this stream emits a text audit event.
+
+    It returns None when no text audit event follows, so those streams keep
+    no reply in memory. The limit is the audit payload limit: a larger reply is
+    replaced as a whole when the payload is compacted.
+    """
+    if _audited_by_accounting(request):
+        return None
+    audit_service = getattr(request.app.state, "audit_service", None)
+    if audit_service is None:
+        return None
+    config = getattr(audit_service, "ingestion_config", None)
+    max_bytes = getattr(config, "payload_max_bytes", DEFAULT_AUDIT_PAYLOAD_MAX_BYTES)
+    return StreamReplyAccumulator(max_chars=max_bytes)
+
+
+def _audited_by_accounting(request: Request) -> bool:
+    return isinstance(
+        getattr(request.state, "spend_operation_handle", None),
+        AccountingOperationHandle,
+    )
 
 
 def audit_action_for_path(path: str) -> str:
@@ -44,10 +70,7 @@ async def emit_text_audit_event(
     output_tokens: int | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
-    if isinstance(
-        getattr(request.state, "spend_operation_handle", None),
-        AccountingOperationHandle,
-    ):
+    if _audited_by_accounting(request):
         return
     audit_service: AuditService | None = getattr(request.app.state, "audit_service", None)
     if audit_service is None:

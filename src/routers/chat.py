@@ -26,7 +26,7 @@ from src.chat.durable_execution import (
     execute_durable_chat as execute_chat,
     open_durable_stream as open_stream_with_first_chunk,
 )
-from src.chat.audit import request_client_ip
+from src.chat.audit import request_client_ip, stream_reply_accumulator
 from src.chat.mcp_execution import (
     MCPChatExecutionService,
     MCPModelRouting,
@@ -255,7 +255,7 @@ async def handle_chat_like_request(
                 stream_handler = getattr(request.app.state, "streaming_cache_handler", None)
                 stream_id = None
                 stream_write_context: StreamWriteContext | None = None
-                stream_usage = StreamUsageTracker()
+                stream_usage = StreamUsageTracker(reply=stream_reply_accumulator(request))
                 failure_exc: BaseException | None = None
                 stream_error: Exception | None = None
                 health_error: Exception | None = None
@@ -487,6 +487,13 @@ async def handle_chat_like_request(
                     params=opened_stream.params,
                     usage=resolved_usage.usage,
                     usage_metadata=resolved_usage.metadata(),
+                    reply=(
+                        stream_usage.reply.completion(
+                            fallback_model=payload.model, usage=resolved_usage.usage
+                        )
+                        if stream_usage.reply is not None
+                        else None
+                    ),
                 ):
                     try:
                         if terminal_line is not None:
